@@ -24,7 +24,6 @@ void fill_buffer(char *buf) {
         buf[i] = charset[rand() % (sizeof(charset) - 1)];
 }
 
-
 typedef struct {
     char *buf;
     size_t start;
@@ -33,7 +32,6 @@ typedef struct {
 
 void *convert_mt(void *arg) {
     thread_arg_t *arg_ = (thread_arg_t*)arg;
-
     for (int i = arg_->start; i < arg_->end; i++) {
         char c = arg_->buf[i];
         if (c >= 'a' && c <= 'z')
@@ -48,7 +46,8 @@ void convert_simd(char *buf, size_t n) {
     __m256i z = _mm256_set1_epi8('z');
     __m256i diff = _mm256_set1_epi8(32);
 
-    for (int i = 0; i + 32 <= n; i += 32) {
+    int i = 0;
+    for (; i + 32 <= n; i += 32) {
         __m256i v = _mm256_loadu_si256((__m256i*)&buf[i]);
 
         __m256i is_lower =
@@ -63,6 +62,11 @@ void convert_simd(char *buf, size_t n) {
         _mm256_storeu_si256((__m256i*)&buf[i], result);
     }
 
+    for (; i < n; i++) {
+        if (buf[i] >= 'a' && buf[i] <= 'z') {
+            buf[i] -= 32;
+        }
+    }
 }
 
 void *convert_simd_mt(void *arg) {
@@ -73,7 +77,7 @@ void *convert_simd_mt(void *arg) {
 
 
 int main(int argc, char **argv) {
-    printf("Buffer size: %lu MB\n", SIZE / (1024*1024));
+    printf("Buffer size: %d MB\n", SIZE / (1024*1024));
     printf("Threads used: %d\n\n", THREADS);
 
     char *buf1 = (char*)malloc(SIZE);
@@ -90,9 +94,9 @@ int main(int argc, char **argv) {
     pthread_t threads[THREADS];
     thread_arg_t args[THREADS];
 
-    double mth_start = getTime();
-
     int chunk = SIZE / THREADS;
+
+    double mth_start = getTime();
     for (int i = 0; i < THREADS; i++) {
         args[i].buf = buf1;
         args[i].start = i * chunk;

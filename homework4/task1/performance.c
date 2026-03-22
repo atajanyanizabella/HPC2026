@@ -10,13 +10,15 @@
 
 char random_base() {
     int r = rand() % 4;
-    switch (r) {
+    char characters[4] = {'A', 'C', 'G', 'T'};
+    return characters[r];
+    /*switch (r) {
         case 0: return 'A';
         case 1: return 'C';
         case 2: return 'G';
         case 3: return 'T';
     }
-    return 'A';
+    return 'A';*/
 }
 
 double getTime() {
@@ -34,13 +36,6 @@ struct chunk_t {
     int start;
     int end;
 };
-
-struct local_t {
-    int start;
-    int end;
-    uint64_t A, C, G, T;
-};
-
 
 // multithreading function
 void* worker(void* arg) {
@@ -95,9 +90,23 @@ void simd_count(const char *buffer,
         cT += __builtin_popcount(_mm256_movemask_epi8(eqT));
     }
 
+    for (; i < DNA_SIZE; i++) {
+        switch (buffer[i]) {
+            case 'A': cA++; break;
+            case 'C': cC++; break;
+            case 'G': cG++; break;
+            case 'T': cT++; break;
+        }
+    }
+
     *A = cA; *C = cC; *G = cG; *T = cT;
 }
 
+struct local_t {
+    int start;
+    int end;
+    uint64_t A, C, G, T;
+};
 
 void* simd_worker(void *arg)
 {
@@ -109,8 +118,8 @@ void* simd_worker(void *arg)
     __m256i vT = _mm256_set1_epi8('T');
 
     uint64_t cA = 0, cC = 0, cG = 0, cT = 0;
-
-    for (int i = l->start; i < l->end; i += 32) {
+    int simd_end = l->end - ((l->end - l->start) % 32);
+    for (int i = l->start; i < simd_end; i += 32) {
         __m256i v = _mm256_loadu_si256((__m256i*)(gl_buffer + i));
 
         __m256i eqA = _mm256_cmpeq_epi8(v, vA);
@@ -124,6 +133,15 @@ void* simd_worker(void *arg)
         cT += __builtin_popcount(_mm256_movemask_epi8(eqT));
     }
 
+    for (; i < l->end; ++i)  {
+    	switch (gl_buffer[i]) {
+		case 'A': cA++; break;
+		case 'C': cC++; break;
+		case 'G': cG++; break;
+		case 'T': cT++; break;
+	}
+    }
+
     l->A = cA;
     l->C = cC;
     l->G = cG;
@@ -134,24 +152,23 @@ void* simd_worker(void *arg)
 
 
 int main() {
-    /////////////////////////////////////
-    //               Scalar            //
-    /////////////////////////////////////
-    char* buffer = (char*)malloc(DNA_SIZE);
+    gl_buffer = (char*)malloc(DNA_SIZE);
     
-    if (!buffer) {
+    if (!gl_buffer) {
         printf("Memory allocation failed\n");
         return 1;
     }
-
     for (int i = 0; i < DNA_SIZE; ++i) {
-        buffer[i] = random_base();
+        gl_buffer[i] = random_base();
     }
+    /////////////////////////////////////
+    //               Scalar            //
+    /////////////////////////////////////
 
     long countA = 0, countC = 0, countG = 0, countT = 0;
     double start = getTime();
     for (int i = 0; i < DNA_SIZE; i++) {
-        switch (buffer[i]) {
+        switch (gl_buffer[i]) {
             case 'A': countA++; break;
             case 'C': countC++; break;
             case 'G': countG++; break;
@@ -162,16 +179,6 @@ int main() {
     /////////////////////////////////////
     //           MultiThread           //
     /////////////////////////////////////
-
-    gl_buffer = (char*)malloc(DNA_SIZE);
-    
-    if (!gl_buffer) {
-        printf("Memory allocation failed\n");
-        return 1;
-    }
-    for (int i = 0; i < DNA_SIZE; ++i) {
-        gl_buffer[i] = random_base();
-    }
 
     pthread_spin_init(&lock, PTHREAD_PROCESS_PRIVATE);
     pthread_t threads[THREADS];
@@ -203,9 +210,9 @@ int main() {
     double simd_end = getTime();
 
     /////////////////////////////////////
-    //              SIMD               //
+    //          SIMD x THREAD          //
     /////////////////////////////////////
-    
+ 
     pthread_t threads_[THREADS];
     struct local_t args[THREADS];
     int size = DNA_SIZE / THREADS;
@@ -232,16 +239,11 @@ int main() {
     
     printf("DNA size: %d\n", DNA_SIZE / (1024 * 1024));
     printf("Threads used: %d\n", THREADS);
-    printf("Scakar(separate buffer)\nCounts (A C G T):\n%ld %ld %ld %ld\n", gl_countA, gl_countC, gl_countG, gl_countT);
-    printf("Multithreading\nCounts (A C G T):\n%ld %ld %ld %ld\n", A, C, G, T);
-    printf("SIMD\nCounts (A C G T):\n%ld %ld %ld %ld\n", A, C, G, T);
-    printf("SIMD x Multithreading\nCounts (A C G T):\n%ld %ld %ld %ld\n", A_, C_, G_, T_);
     printf("\nScalar time: %.6f sec\n", end - start);
     printf("Multithreading time: %.6f sec\n", mth_end - mth_start);
     printf("SIMD time: %.6f sec\n", simd_end - simd_start);
     printf("SIMDxMultithreading time: %.6f sec\n", simd_th_end - simd_th_start);
 
-    free(buffer);
     free(gl_buffer);
     return 0;
 }
